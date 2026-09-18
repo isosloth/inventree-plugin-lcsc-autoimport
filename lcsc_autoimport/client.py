@@ -20,12 +20,14 @@ class LCSCClient:
         base_url: str | None = None,
         api_key: str | None = None,
         send_auth_headers: bool = False,
+        request_headers: Mapping[str, str] | None = None,
         timeout: int = 15,
         verify_ssl: bool = True,
     ):
         self.base_url = (base_url or self.DEFAULT_URL).strip()
         self.api_key = api_key
         self.send_auth_headers = send_auth_headers
+        self.request_headers = dict(request_headers or {})
         self.timeout = timeout
         self.verify_ssl = verify_ssl
 
@@ -34,7 +36,7 @@ class LCSCClient:
         if not sku:
             raise ValueError("SKU is required")
 
-        headers = {}
+        headers = dict(self.request_headers)
         if self.api_key and self.send_auth_headers:
             headers["Authorization"] = f"Bearer {self.api_key}"
             headers["X-API-Key"] = self.api_key

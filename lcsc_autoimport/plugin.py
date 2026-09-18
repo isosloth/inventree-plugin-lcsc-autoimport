@@ -63,6 +63,11 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             "default": False,
             "type": "bool",
         },
+        "REQUEST_HEADERS": {
+            "name": "Request Headers",
+            "description": "JSON object of additional HTTP headers sent with product requests",
+            "default": "{}",
+        },
         "FETCH_ENABLED": {
             "name": "Fetch Enabled",
             "description": "Toggle remote product fetching when importing an LCSC code",
@@ -97,6 +102,21 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             return {}
         return mapping if isinstance(mapping, dict) else {}
 
+    def _request_headers(self) -> dict[str, str]:
+        raw_headers = self.get_setting("REQUEST_HEADERS") or "{}"
+        try:
+            headers = json.loads(raw_headers)
+        except json.JSONDecodeError as exc:
+            raise ValidationError("Request Headers must be a valid JSON object") from exc
+
+        if not isinstance(headers, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in headers.items()
+        ):
+            raise ValidationError("Request Headers must map string header names to string values")
+
+        return headers
+
     def _category_path_for_product(self, product_category: str | None):
         root_path = self.get_setting("CATEGORY_ROOT_PATH") or "Electronics/PCB-Parts"
         mapping = self._category_mapping()
@@ -121,6 +141,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
                 base_url=self.get_setting("LCSC_API_URL"),
                 api_key=self.get_setting("LCSC_API_KEY"),
                 send_auth_headers=self.get_setting("SEND_AUTH_HEADERS"),
+                request_headers=self._request_headers(),
                 timeout=int(self.get_setting("TIMEOUT_SECONDS") or 15),
             )
             product_payload = client.fetch_product(sku)

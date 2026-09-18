@@ -38,6 +38,7 @@ After installation, open the plugin settings and configure:
 - `LCSC API URL` — the endpoint used to fetch product JSON
 - `LCSC API Key` — optional bearer token / API key if your endpoint requires it
 - `Send Authentication Headers` — disabled by default; enable it only when the configured endpoint requires `Authorization` and `X-API-Key`
+- `Request Headers` — a JSON object of additional headers to send on every request; for example, `{"User-Agent": "Example client", "Origin": "https://www.lcsc.com", "Referer": "https://www.lcsc.com/"}`
 - `Category Root Path` — every imported API category is created beneath this path; for example, `Electronics/PCB-Parts`
 - `Default Category Path` — fallback category name relative to the category root, such as `Uncategorized`
 - `Category Mapping` — optional JSON mapping of remote category names to paths relative to the category root; for example, `{"Resistors": "Passives/Resistors"}` becomes `Electronics/PCB-Parts/Passives/Resistors`
