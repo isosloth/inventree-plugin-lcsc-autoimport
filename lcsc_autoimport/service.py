@@ -25,14 +25,33 @@ def get_default_supplier() -> Company | None:
     return Company.objects.filter(is_supplier=True, name__icontains="LCSC").first()
 
 
-def ensure_category_path(category_path: str, *, parent: PartCategory | None = None) -> PartCategory:
+def ensure_category_path(
+    category_path: str,
+    *,
+    parent: PartCategory | None = None,
+    category_ids: list[str] | None = None,
+) -> PartCategory:
+    """Create (or fetch) the full category tree for a slash-separated path.
+
+    ``category_ids`` (if provided) holds the LCSC catalog id for the *trailing* segments of
+    the path (i.e. the segments sourced from the remote category chain, not the configured
+    root path) and is aligned by matching from the end of ``path``. When a segment is newly
+    created, its matching id is stashed in category metadata for traceability.
+    """
     path = [segment.strip() for segment in category_path.split("/") if segment and segment.strip()]
     if not path:
         raise ValueError("Category path is empty")
 
+    ids = list(category_ids or [])
+    offset = len(path) - len(ids)
+
     current = parent
-    for segment in path:
-        current, _ = PartCategory.objects.get_or_create(name=segment, parent=current)
+    for index, segment in enumerate(path):
+        current, created = PartCategory.objects.get_or_create(name=segment, parent=current)
+        if created and 0 <= index - offset < len(ids):
+            segment_id = str(ids[index - offset] or "").strip()
+            if segment_id:
+                current.set_metadata("lcsc_catalog_id", segment_id)
     return current
 
 
@@ -43,8 +62,26 @@ def normalize_template_name(value: str) -> str:
     return text.replace("_", " ").replace("-", " ")
 
 
-def create_or_update_parameter(part: Part, parameter_name: str, value: Any) -> ParameterTemplate:
-    template, _ = ParameterTemplate.objects.get_or_create(name=normalize_template_name(parameter_name))
+def create_or_update_parameter(
+    part: Part, parameter_id: str, display_name: str, value: Any
+) -> ParameterTemplate:
+    """Create/update a parameter using a stable ``parameter_id`` as the template name.
+
+    LCSC's human-readable parameter names (``paramNameEn``) can vary between categories for
+    what is otherwise the same underlying attribute, while ``paramId`` (or a slug derived from
+    the name, when no id is supplied) is stable. The template's ``name`` therefore stores the
+    stable id, while ``display_name`` is kept in the template description for UI purposes.
+    """
+    parameter_id = (parameter_id or "").strip() or normalize_template_name(display_name).upper().replace(" ", "_") or "PARAM"
+    display_name = normalize_template_name(display_name) or parameter_id
+
+    template, created = ParameterTemplate.objects.get_or_create(
+        name=parameter_id,
+        defaults={"description": display_name},
+    )
+    if not created and display_name and template.description != display_name:
+        template.description = display_name
+        template.save(update_fields=["description"])
 
     category_templates = PartCategoryParameterTemplate.objects.filter(category=part.category)
     if not category_templates.filter(template=template).exists():
@@ -119,6 +156,7 @@ def import_lcsc_product(
     *,
     supplier: Company | int | str | None,
     category_path: str | None = None,
+    category_ids: list[str] | None = None,
     quantity: Decimal | None = None,
     stock_location=None,
     image_headers: Mapping[str, str] | None = None,
@@ -140,7 +178,7 @@ def import_lcsc_product(
     if not resolved_category_path:
         resolved_category_path = "Electronics/Uncategorized"
 
-    category = ensure_category_path(resolved_category_path)
+    category = ensure_category_path(resolved_category_path, category_ids=category_ids)
 
     supplier_part = SupplierPart.objects.filter(SKU=sku).select_related("part").first()
     part = supplier_part.part if supplier_part else None
@@ -204,11 +242,12 @@ def import_lcsc_product(
     for attribute in product.get("attributes") or []:
         if not isinstance(attribute, dict):
             continue
-        name = str(attribute.get("name") or "").strip()
+        display_name = str(attribute.get("name") or "").strip()
+        parameter_id = str(attribute.get("id") or "").strip()
         value = attribute.get("value")
-        if not name:
+        if not display_name and not parameter_id:
             continue
-        create_or_update_parameter(part, name, value)
+        create_or_update_parameter(part, parameter_id, display_name, value)
 
     _store_product_image(part, str(product.get("image_url") or ""), image_headers)
     stock_item = _add_stock(part, supplier_part, quantity, stock_location)

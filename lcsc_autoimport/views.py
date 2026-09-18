@@ -85,11 +85,14 @@ class BulkImportAPIView(APIView):
                 else:
                     product = normalize_lcsc_payload(item)
 
+                category_ids = None
                 if category_override:
                     category_path = category_override
                 elif plugin is not None:
-                    category_path = plugin._category_path_for_product(
-                        product.get("category"), product.get("category_chain")
+                    category_path, category_ids = plugin._category_path_for_product(
+                        product.get("category"),
+                        product.get("category_chain"),
+                        product.get("category_chain_ids"),
                     )
                 else:
                     category_path = product.get("category")
@@ -98,6 +101,7 @@ class BulkImportAPIView(APIView):
                     product,
                     supplier=supplier,
                     category_path=category_path,
+                    category_ids=category_ids,
                     quantity=quantity,
                     stock_location=stock_location,
                     image_headers=image_headers,

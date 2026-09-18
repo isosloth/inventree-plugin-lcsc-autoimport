@@ -23,7 +23,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
     SLUG = "lcscautoimport"
     TITLE = "LCSC Auto Import"
     DESCRIPTION = "Import LCSC parts automatically from product JSON and scanned QR payloads"
-    VERSION = "0.1.4"
+    VERSION = "0.1.5"
     AUTHOR = "isosloth"
 
     SETTINGS = {
@@ -140,20 +140,31 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
 
         return headers
 
-    def _category_path_for_product(self, product_category: str | None, category_chain: list[str] | None = None):
+    def _category_path_for_product(
+        self,
+        product_category: str | None,
+        category_chain: list[str] | None = None,
+        category_chain_ids: list[str] | None = None,
+    ) -> tuple[str, list[str] | None]:
+        """Resolve the InvenTree category path (and, where applicable, source catalog ids).
+
+        Returns a ``(path, category_ids)`` tuple. ``category_ids`` is only populated when the
+        path was built directly from the remote category chain (i.e. no ``Category Mapping``
+        override applied), since a manual mapping no longer corresponds 1:1 with remote ids.
+        """
         root_path = self.get_setting("CATEGORY_ROOT_PATH") or "Electronics/PCB-Parts"
         mapping = self._category_mapping()
         lookup_name = product_category or (category_chain[-1] if category_chain else None)
         if lookup_name:
             for src, target in mapping.items():
                 if str(src).lower() == str(lookup_name).lower():
-                    return build_category_path(str(target), root_path)
+                    return build_category_path(str(target), root_path), None
         if category_chain:
-            return build_category_chain_path(category_chain, root_path)
+            return build_category_chain_path(category_chain, root_path), category_chain_ids
         if product_category:
-            return build_category_path(product_category, root_path)
+            return build_category_path(product_category, root_path), None
         default = self.get_setting("DEFAULT_CATEGORY_PATH") or "Uncategorized"
-        return build_category_path(default, root_path)
+        return build_category_path(default, root_path), None
 
     def _stock_location(self, user=None):
         if user is not None and getattr(user, "is_authenticated", False):
@@ -194,13 +205,16 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
         elif product_payload is None:
             product_payload = {"sku": sku, "category": None, "attributes": []}
 
-        category_path = self._category_path_for_product(
-            product_payload.get("category"), product_payload.get("category_chain")
+        category_path, category_ids = self._category_path_for_product(
+            product_payload.get("category"),
+            product_payload.get("category_chain"),
+            product_payload.get("category_chain_ids"),
         )
         return import_lcsc_product(
             product_payload,
             supplier=supplier,
             category_path=category_path,
+            category_ids=category_ids,
             quantity=quantity,
             stock_location=self._stock_location(user),
             image_headers=self._request_headers(),

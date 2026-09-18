@@ -96,6 +96,20 @@ The plugin:
 
 When the LCSC payload includes a `parentCatalogList` array and a `parentCatalogName`, the plugin builds the full nested category chain (each `catalogNameEn` entry, in order, followed by `parentCatalogName` as the final leaf category) beneath `Category Root Path` — for example `Electronics/PCB-Parts/Passives/Capacitors/Aluminum Electrolytic Capacitors`. `Category Mapping` is checked against the final (deepest) category name and, if matched, replaces the whole chain with the mapped path. Missing or unknown categories fall back to `Default Category Path` below that root.
 
+Each `catalogId` (from `parentCatalogList[].catalogId`) and the leaf category's `wmCatalogId` are stashed in the created category's metadata as `lcsc_catalog_id`, for traceability back to LCSC's own category ids. This only happens for newly created categories built from the automatic chain (not when a `Category Mapping` override applies).
+
+## Parameters
+
+Each imported attribute is saved as an InvenTree `ParameterTemplate`. The template's internal `name` is set to LCSC's own stable `paramId` (falling back to a slug derived from the parameter's display name if no id is present in the payload), so that the same underlying attribute is reused across categories/parts even when LCSC's human-readable label (`paramNameEn`) differs between categories. The human-readable label is kept on the template's `description` field for display purposes.
+
+### Package / mounting type ("encap")
+
+The plugin looks for an encapsulation/package attribute (either a dedicated top-level API field, or any parameter whose name contains "encap" or "package") and splits it into up to two parameters, smarter than LCSC's raw value:
+
+- A raw value such as `SMD,SOD-123` or `Through Hole,TO-92` is split on the comma into a **Mounting Type** parameter (normalized to `SMD` or `THT`) and a **Package / Encapsulation** parameter (the remaining package designator, e.g. `SOD-123`).
+- A raw value with no comma, such as `Plugin`, is stored as-is in the **Package / Encapsulation** parameter, with no Mounting Type parameter created.
+- If no such field or attribute is found in the payload, no package/mounting parameters are added.
+
 ## Security notes
 
 - Keep the API key in the InvenTree plugin settings and do not hard-code secrets.

@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -59,6 +60,55 @@ def _normalize_parameter_value(value: Any) -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
     return _clean_text(value)
+
+
+def _slugify_key(name: Any) -> str:
+    """Build a stable, uppercase parameter key from a human-readable name."""
+    text = _clean_text(name).upper()
+    text = re.sub(r"[^A-Z0-9]+", "_", text).strip("_")
+    return text or "PARAM"
+
+
+def _looks_like_encapsulation(name: Any) -> bool:
+    text = _clean_text(name).lower()
+    return "encap" in text or "package" in text or text in {"case", "case/package"}
+
+
+def _parse_encapsulation(raw: Any, source_id: str = "") -> list[dict[str, str]]:
+    """Split a raw LCSC encapsulation value into mounting type and package parameters.
+
+    LCSC commonly reports this as ``"SMD,SOD-123"`` or ``"Through Hole,TO-92"``. When no
+    comma is present (e.g. ``"Plugin"``), it is treated as the package value on its own.
+    """
+    cleaned = _clean_text(raw)
+    if not cleaned:
+        return []
+
+    if "," in cleaned:
+        mounting_raw, package_raw = (part.strip() for part in cleaned.split(",", 1))
+    else:
+        mounting_raw, package_raw = "", cleaned
+
+    entries: list[dict[str, str]] = []
+
+    if mounting_raw:
+        mounting_lower = mounting_raw.lower()
+        if "smd" in mounting_lower or "smt" in mounting_lower:
+            mounting = "SMD"
+        elif "through hole" in mounting_lower or "tht" in mounting_lower or "dip" in mounting_lower:
+            mounting = "THT"
+        else:
+            mounting = mounting_raw if len(mounting_raw) <= 5 else mounting_raw.title()
+        entries.append({"id": "MOUNTING_TYPE", "name": "Mounting Type", "value": mounting})
+
+    if package_raw:
+        entries.append({
+            "id": _clean_text(source_id) or "ENCAPSULATION",
+            "name": "Package / Encapsulation",
+            "value": package_raw,
+        })
+
+    return entries
 
 
 def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -125,12 +175,21 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
     parent_catalog_list = root.get("parentCatalogList")
     if not isinstance(parent_catalog_list, list):
         parent_catalog_list = []
-    chain_names: list[Any] = []
-    for entry in parent_catalog_list:
-        if isinstance(entry, dict):
-            chain_names.append(_first_present(entry.get("catalogNameEn"), entry.get("catalogName")))
-    chain_names.append(root.get("parentCatalogName"))
-    category_chain = _clean_chain(chain_names)
+    chain_pairs: list[tuple[Any, Any]] = [
+        (_first_present(entry.get("catalogNameEn"), entry.get("catalogName")), entry.get("catalogId"))
+        for entry in parent_catalog_list
+        if isinstance(entry, dict)
+    ]
+    chain_pairs.append((root.get("parentCatalogName"), root.get("wmCatalogId")))
+
+    category_chain: list[str] = []
+    category_chain_ids: list[str] = []
+    for chain_name, chain_id in chain_pairs:
+        cleaned_name = _clean_text(chain_name)
+        if not cleaned_name or cleaned_name.lower() in {"uncategorized", "unknown", "none"}:
+            continue
+        category_chain.append(cleaned_name)
+        category_chain_ids.append(_clean_text(chain_id))
     if category_chain:
         category_name = category_chain[-1]
 
@@ -169,15 +228,27 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
     elif not isinstance(raw_attrs, Iterable):
         raw_attrs = []
 
+    encapsulation_added = False
+
     for item in raw_attrs:
         if isinstance(item, dict):
+            field_id = _clean_text(_first_present(item.get("paramId"), item.get("id"), item.get("attributeId")))
             field_name = _first_present(item.get("name"), item.get("paramNameEn"), item.get("paramName"), item.get("label"))
             field_value = _first_present(item.get("value"), item.get("paramValueEn"), item.get("paramValue"), item.get("text"), item.get("valueText"))
             if field_name is None:
                 continue
+            display_name = _normalize_field_name(field_name)
+            raw_value = _normalize_parameter_value(field_value)
+            if _looks_like_encapsulation(field_name):
+                parsed = _parse_encapsulation(raw_value, field_id)
+                if parsed:
+                    attributes.extend(parsed)
+                    encapsulation_added = True
+                    continue
             attributes.append({
-                "name": _normalize_field_name(field_name),
-                "value": _normalize_parameter_value(field_value),
+                "id": field_id or _slugify_key(display_name),
+                "name": display_name,
+                "value": raw_value,
             })
 
     # Try to extract a more general “attributes” list if the payload uses a nested dict
@@ -185,7 +256,30 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         nested = root.get(candidate_key)
         if isinstance(nested, dict):
             for key, value in nested.items():
-                attributes.append({"name": _normalize_field_name(key), "value": _normalize_parameter_value(value)})
+                display_name = _normalize_field_name(key)
+                raw_value = _normalize_parameter_value(value)
+                if _looks_like_encapsulation(key):
+                    parsed = _parse_encapsulation(raw_value)
+                    if parsed:
+                        attributes.extend(parsed)
+                        encapsulation_added = True
+                        continue
+                attributes.append({
+                    "id": _slugify_key(display_name),
+                    "name": display_name,
+                    "value": raw_value,
+                })
+
+    if not encapsulation_added:
+        fallback_encap = _first_present(
+            root.get("encapStandard"),
+            root.get("encapsulationStandard"),
+            root.get("encapsulation"),
+            root.get("packageType"),
+            root.get("footprint"),
+            "",
+        )
+        attributes.extend(_parse_encapsulation(fallback_encap))
 
     return {
         "sku": str(sku),
@@ -193,6 +287,7 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "description": _clean_text(description),
         "category": _clean_text(category_name),
         "category_chain": category_chain,
+        "category_chain_ids": category_chain_ids,
         "manufacturer": _clean_text(manufacturer),
         "manufacturer_part_number": _clean_text(manufacturer_part_number),
         "pdf_url": _clean_text(pdf_url),
