@@ -14,9 +14,18 @@ class LCSCClient:
 
     DEFAULT_URL = "https://wmsc.lcsc.com/wmsc/product/detail"
 
-    def __init__(self, *, base_url: str | None = None, api_key: str | None = None, timeout: int = 15, verify_ssl: bool = True):
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        send_auth_headers: bool = False,
+        timeout: int = 15,
+        verify_ssl: bool = True,
+    ):
         self.base_url = (base_url or self.DEFAULT_URL).strip()
         self.api_key = api_key
+        self.send_auth_headers = send_auth_headers
         self.timeout = timeout
         self.verify_ssl = verify_ssl
 
@@ -26,7 +35,7 @@ class LCSCClient:
             raise ValueError("SKU is required")
 
         headers = {}
-        if self.api_key:
+        if self.api_key and self.send_auth_headers:
             headers["Authorization"] = f"Bearer {self.api_key}"
             headers["X-API-Key"] = self.api_key
 

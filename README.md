@@ -37,8 +37,10 @@ After installation, open the plugin settings and configure:
 - `LCSC Supplier` — the InvenTree supplier company record that represents LCSC
 - `LCSC API URL` — the endpoint used to fetch product JSON
 - `LCSC API Key` — optional bearer token / API key if your endpoint requires it
-- `Default Category Path` — fallback category used when the remote product category is unknown
-- `Category Mapping` — optional mapping of remote category names to InvenTree category paths
+- `Send Authentication Headers` — disabled by default; enable it only when the configured endpoint requires `Authorization` and `X-API-Key`
+- `Category Root Path` — every imported API category is created beneath this path; for example, `Electronics/PCB-Parts`
+- `Default Category Path` — fallback category name relative to the category root, such as `Uncategorized`
+- `Category Mapping` — optional JSON mapping of remote category names to paths relative to the category root; for example, `{"Resistors": "Passives/Resistors"}` becomes `Electronics/PCB-Parts/Passives/Resistors`
 - `Fetch Enabled` — whether remote fetches are enabled
 
 A good default URL is the LCSC-compatible endpoint you use in your environment; the code is intentionally written so you can swap the remote adapter without changing the rest of the plugin.
@@ -89,7 +91,7 @@ The plugin:
 4. creates or reuses the matching `ParameterTemplate` objects
 5. stores the normalized parameter values on the `Part`
 
-The default mapping is intentionally conservative. Unknown categories fall back to the configured default category path.
+Unknown categories use the API category below `Category Root Path`. Missing or unknown categories use `Default Category Path` below that root.
 
 ## Security notes
 

@@ -42,15 +42,26 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             "model": "company.company",
             "model_filters": {"is_supplier": True},
         },
+        "CATEGORY_ROOT_PATH": {
+            "name": "Category Root Path",
+            "description": "All LCSC categories are created below this InvenTree category path",
+            "default": "Electronics/PCB-Parts",
+        },
         "DEFAULT_CATEGORY_PATH": {
             "name": "Default Category Path",
-            "description": "Fallback category path used when no category can be resolved",
-            "default": "Electronics/Uncategorized",
+            "description": "Fallback category name, relative to Category Root Path",
+            "default": "Uncategorized",
         },
         "CATEGORY_MAPPING": {
             "name": "Category Mapping",
-            "description": "JSON mapping of remote category names to local InvenTree category paths",
+            "description": "JSON mapping of remote category names to paths relative to Category Root Path",
             "default": "{}",
+        },
+        "SEND_AUTH_HEADERS": {
+            "name": "Send Authentication Headers",
+            "description": "Send Authorization and X-API-Key headers when an API key is configured",
+            "default": False,
+            "type": "bool",
         },
         "FETCH_ENABLED": {
             "name": "Fetch Enabled",
@@ -87,15 +98,15 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
         return mapping if isinstance(mapping, dict) else {}
 
     def _category_path_for_product(self, product_category: str | None):
+        root_path = self.get_setting("CATEGORY_ROOT_PATH") or "Electronics/PCB-Parts"
         mapping = self._category_mapping()
         if product_category:
             for src, target in mapping.items():
                 if str(src).lower() == str(product_category).lower():
-                    return str(target)
-        default = self.get_setting("DEFAULT_CATEGORY_PATH") or "Electronics/Uncategorized"
-        if product_category:
-            return build_category_path(product_category, default)
-        return default
+                    return build_category_path(str(target), root_path)
+            return build_category_path(product_category, root_path)
+        default = self.get_setting("DEFAULT_CATEGORY_PATH") or "Uncategorized"
+        return build_category_path(default, root_path)
 
     def import_lcsc_sku(self, sku: str, *, product_payload: dict | None = None):
         if not sku:
@@ -109,11 +120,12 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             client = LCSCClient(
                 base_url=self.get_setting("LCSC_API_URL"),
                 api_key=self.get_setting("LCSC_API_KEY"),
+                send_auth_headers=self.get_setting("SEND_AUTH_HEADERS"),
                 timeout=int(self.get_setting("TIMEOUT_SECONDS") or 15),
             )
             product_payload = client.fetch_product(sku)
         elif product_payload is None:
-            product_payload = {"sku": sku, "category": self.get_setting("DEFAULT_CATEGORY_PATH") or "Electronics/Uncategorized", "attributes": []}
+            product_payload = {"sku": sku, "category": None, "attributes": []}
 
         category_path = self._category_path_for_product(product_payload.get("category"))
         return import_lcsc_product(product_payload, supplier=supplier, category_path=category_path)

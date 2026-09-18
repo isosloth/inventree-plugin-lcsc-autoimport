@@ -156,15 +156,15 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_category_path(category_name: str, fallback_path: str) -> str:
-    """Convert a remote category name into a stable InvenTree category path."""
+def build_category_path(category_name: str, root_path: str) -> str:
+    """Append a remote category path to the configured InvenTree category root."""
+    root_parts = [part.strip() for part in _clean_text(root_path).strip("/").split("/") if part.strip()]
     cleaned = _clean_text(category_name)
     if not cleaned or cleaned.lower() in {"uncategorized", "unknown", "none"}:
-        return fallback_path
+        return "/".join(root_parts)
 
-    # Split on common category separators and keep only non-empty values.
     parts = [part.strip() for part in cleaned.replace("/", "|").replace("\\", "|").split("|")]
     filtered = [part for part in parts if part]
     if not filtered:
-        return fallback_path
-    return "/".join(filtered)
+        return "/".join(root_parts)
+    return "/".join([*root_parts, *filtered])
