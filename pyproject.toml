@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inventree-plugin-lcsc-autoimport"
+version = "0.1.0"
+description = "InvenTree plugin for importing and scanning LCSC parts automatically"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "isosloth" }
+]
+license = { text = "MIT" }
+keywords = ["inventree", "lcsc", "electronics", "inventory", "barcode"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Framework :: Django",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-django>=4.8",
+]
+
+[project.entry-points."inventree_plugins"]
+lcsc_autoimport = "lcsc_autoimport.plugin:LCSCAutoImportPlugin"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["lcsc_autoimport*"]

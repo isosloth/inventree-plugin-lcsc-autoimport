@@ -1,0 +1,57 @@
+# InvenTree LCSC Auto Import Plugin
+
+This repository contains a small installable InvenTree plugin for importing and scanning LCSC parts automatically.
+
+## Overview
+
+The plugin is designed to work with LCSC-compatible JSON payloads and scans in a way that keeps the LCSC identifier (`pc` / SKU) as the canonical part key while still allowing InvenTree to manage the final inventory record.
+
+## Install
+
+```bash
+pip install inventree-plugin-lcsc-autoimport
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/isosloth/inventree-plugin-lcsc-autoimport.git
+cd inventree-plugin-lcsc-autoimport
+pip install -e .
+```
+
+Then enable the plugin in the InvenTree admin/plugin settings UI.
+
+## Common configuration
+
+Configure this plugin with:
+
+- the LCSC supplier company record
+- the product fetch URL
+- optional API key
+- default fallback category path
+- category mapping JSON
+- fetch toggle
+
+## Sample API request
+
+```bash
+curl -X POST \
+  -H "Authorization: Token <your-inventree-token>" \
+  -H "Content-Type: application/json" \
+  http://localhost:8000/api/plugin/lcsc-autoimport/bulk/ \
+  -d '{
+    "items": [
+      {"sku": "C312270"},
+      {"sku": "C0402C104K5RACTU"}
+    ]
+  }'
+```
+
+## Example scan
+
+The plugin recognizes LCSC QR payloads with fields like `pc:C312270` and imports them on demand if they are not already in InvenTree.
+
+## License
+
+MIT
