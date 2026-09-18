@@ -50,6 +50,13 @@ After installation, open the plugin settings and configure:
 
 A good default URL is the LCSC-compatible endpoint you use in your environment; the code is intentionally written so you can swap the remote adapter without changing the rest of the plugin.
 
+## Part link, weight, datasheet, and tags
+
+- The imported `Part.link` points at the normal LCSC product page (e.g. `https://www.lcsc.com/product-detail/C312270.html`); the `SupplierPart.link` also points there.
+- The PDF datasheet URL, when present, is kept as a `Datasheet` parameter instead (rather than being used as the part link).
+- `productWeight` (already reported by LCSC in kilograms) is imported as a `Weight (kg)` parameter.
+- Every imported part is tagged `lcsc:<sku>` (e.g. `lcsc:C312270`), so LCSC-sourced parts can be filtered/found by tag.
+
 ## Pricing
 
 When the LCSC payload includes a `productPriceList` array (quantity price breaks per currency), the plugin imports the

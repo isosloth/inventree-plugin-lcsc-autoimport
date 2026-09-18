@@ -242,6 +242,16 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         root.get("detailUrl"),
         f"https://www.lcsc.com/product-detail/{sku}.html",
     )
+    weight_kg = _first_present(
+        root.get("productWeight"),
+        root.get("weight"),
+    )
+    if weight_kg is not None:
+        try:
+            weight_kg = Decimal(str(weight_kg))
+        except InvalidOperation:
+            weight_kg = None
+
     product_images = root.get("productImages") or []
     first_image = product_images[0] if isinstance(product_images, list) and product_images else ""
     if isinstance(first_image, dict):
@@ -333,6 +343,7 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "image_url": _clean_text(first_image),
         "attributes": attributes,
         "price_breaks": _parse_price_breaks(root),
+        "weight_kg": weight_kg,
     }
 
 

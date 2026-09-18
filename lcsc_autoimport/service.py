@@ -242,14 +242,14 @@ def import_lcsc_product(
             purchaseable=True,
             component=True,
             active=True,
-            link=product.get("pdf_url") or None,
+            link=product.get("product_url") or None,
         )
         create_result = "created"
     else:
         part.name = product.get("name") or part.name
         part.description = product.get("description") or part.description
         part.category = category
-        part.link = product.get("pdf_url") or part.link
+        part.link = product.get("product_url") or part.link
         part.save(update_fields=["name", "description", "category", "link"])
         create_result = "updated"
 
@@ -295,14 +295,26 @@ def import_lcsc_product(
             continue
         create_or_update_parameter(part, parameter_id, display_name, value)
 
+    weight_kg = product.get("weight_kg")
+    if weight_kg is not None:
+        create_or_update_parameter(part, "WEIGHT_KG", "Weight (kg)", weight_kg)
+
+    pdf_url = str(product.get("pdf_url") or "").strip()
+    if pdf_url:
+        create_or_update_parameter(part, "DATASHEET_URL", "Datasheet", pdf_url)
+
+    part.tags.add(f"lcsc:{sku}")
+
+    # Image/pricing are synced before stock: a stock-location error (e.g. a structural
+    # location) should not prevent the part's media/pricing from being saved.
     _store_product_image(part, str(product.get("image_url") or ""), image_headers)
-    stock_item = _add_stock(part, supplier_part, quantity, stock_location)
     price_breaks = _sync_supplier_pricing(
         supplier_part,
         product.get("price_breaks"),
         currency_symbol=price_currency_symbol,
         currency_code=price_currency_code,
     )
+    stock_item = _add_stock(part, supplier_part, quantity, stock_location)
 
     return {
         "sku": sku,

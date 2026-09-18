@@ -23,7 +23,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
     SLUG = "lcscautoimport"
     TITLE = "LCSC Auto Import"
     DESCRIPTION = "Import LCSC parts automatically from product JSON and scanned QR payloads"
-    VERSION = "0.1.6"
+    VERSION = "0.1.7"
     AUTHOR = "isosloth"
 
     SETTINGS = {
