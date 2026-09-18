@@ -102,6 +102,10 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             return {}
         return mapping if isinstance(mapping, dict) else {}
 
+    def _setting_is_enabled(self, key: str) -> bool:
+        value = self.get_setting(key)
+        return value is True or str(value).strip().lower() in {"1", "true", "yes", "on"}
+
     def _request_headers(self) -> dict[str, str]:
         raw_headers = self.get_setting("REQUEST_HEADERS") or "{}"
         try:
@@ -140,7 +144,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             client = LCSCClient(
                 base_url=self.get_setting("LCSC_API_URL"),
                 api_key=self.get_setting("LCSC_API_KEY"),
-                send_auth_headers=self.get_setting("SEND_AUTH_HEADERS"),
+                send_auth_headers=self._setting_is_enabled("SEND_AUTH_HEADERS"),
                 request_headers=self._request_headers(),
                 timeout=int(self.get_setting("TIMEOUT_SECONDS") or 15),
             )
