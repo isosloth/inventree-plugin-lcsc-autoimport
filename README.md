@@ -42,7 +42,8 @@ After installation, open the plugin settings and configure:
 - `Category Root Path` — every imported API category is created beneath this path; for example, `Electronics/PCB-Parts`
 - `Default Category Path` — fallback category name relative to the category root, such as `Uncategorized`
 - `Category Mapping` — optional JSON mapping of remote category names to paths relative to the category root; for example, `{"Resistors": "Passives/Resistors"}` becomes `Electronics/PCB-Parts/Passives/Resistors`
-- `Default Stock Location` — required when scanning an LCSC QR code with `qty` or `quantity`; existing stock at this location is incremented
+- `Default Stock Location` — fallback location used when scanning an LCSC QR code with `qty` or `quantity` and the scanning user has not set their own location; existing stock at the resolved location is incremented
+- Each user can also set their own **Default Stock Location** from their account plugin settings page (`/settings/user/plugin-settings/`); a user's own value always takes priority over the admin-configured default above
 - `Fetch Enabled` — whether remote fetches are enabled
 
 A good default URL is the LCSC-compatible endpoint you use in your environment; the code is intentionally written so you can swap the remote adapter without changing the rest of the plugin.
@@ -93,7 +94,7 @@ The plugin:
 4. creates or reuses the matching `ParameterTemplate` objects
 5. stores the normalized parameter values on the `Part`
 
-Unknown categories use the API category below `Category Root Path`. Missing or unknown categories use `Default Category Path` below that root.
+When the LCSC payload includes a `parentCatalogList` array and a `parentCatalogName`, the plugin builds the full nested category chain (each `catalogNameEn` entry, in order, followed by `parentCatalogName` as the final leaf category) beneath `Category Root Path` — for example `Electronics/PCB-Parts/Passives/Capacitors/Aluminum Electrolytic Capacitors`. `Category Mapping` is checked against the final (deepest) category name and, if matched, replaces the whole chain with the mapped path. Missing or unknown categories fall back to `Default Category Path` below that root.
 
 ## Security notes
 

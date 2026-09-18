@@ -11,7 +11,7 @@ from django.utils.translation import gettext_lazy as _
 from plugin import InvenTreePlugin
 from plugin.mixins import BarcodeMixin, SettingsMixin, UrlsMixin
 
-from .adapter import build_category_path
+from .adapter import build_category_chain_path, build_category_path
 from .client import LCSCClient
 from .service import import_lcsc_product, resolve_lcsc_supplier
 
@@ -23,7 +23,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
     SLUG = "lcscautoimport"
     TITLE = "LCSC Auto Import"
     DESCRIPTION = "Import LCSC parts automatically from product JSON and scanned QR payloads"
-    VERSION = "0.1.3"
+    VERSION = "0.1.4"
     AUTHOR = "isosloth"
 
     SETTINGS = {
@@ -71,7 +71,11 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
         },
         "DEFAULT_STOCK_LOCATION": {
             "name": "Default Stock Location",
-            "description": "Location used when an LCSC QR code includes a quantity",
+            "description": (
+                "Fallback location used when an LCSC QR code includes a quantity and the "
+                "scanning user has not chosen their own location (see the user's account "
+                "settings for a per-user override)"
+            ),
             "model": "stock.stocklocation",
         },
         "FETCH_ENABLED": {
@@ -84,6 +88,14 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             "name": "Timeout Seconds",
             "description": "Request timeout in seconds for remote product fetches",
             "default": 15,
+        },
+    }
+
+    USER_SETTINGS = {
+        "DEFAULT_STOCK_LOCATION": {
+            "name": "Default Stock Location",
+            "description": "Location used when you scan an LCSC QR code that includes a quantity",
+            "model": "stock.stocklocation",
         },
     }
 
@@ -128,16 +140,27 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
 
         return headers
 
-    def _category_path_for_product(self, product_category: str | None):
+    def _category_path_for_product(self, product_category: str | None, category_chain: list[str] | None = None):
         root_path = self.get_setting("CATEGORY_ROOT_PATH") or "Electronics/PCB-Parts"
         mapping = self._category_mapping()
-        if product_category:
+        lookup_name = product_category or (category_chain[-1] if category_chain else None)
+        if lookup_name:
             for src, target in mapping.items():
-                if str(src).lower() == str(product_category).lower():
+                if str(src).lower() == str(lookup_name).lower():
                     return build_category_path(str(target), root_path)
+        if category_chain:
+            return build_category_chain_path(category_chain, root_path)
+        if product_category:
             return build_category_path(product_category, root_path)
         default = self.get_setting("DEFAULT_CATEGORY_PATH") or "Uncategorized"
         return build_category_path(default, root_path)
+
+    def _stock_location(self, user=None):
+        if user is not None and getattr(user, "is_authenticated", False):
+            user_location = self.get_user_setting("DEFAULT_STOCK_LOCATION", user)
+            if user_location:
+                return user_location
+        return self.get_setting("DEFAULT_STOCK_LOCATION")
 
     def _qr_quantity(self, barcode_data: str):
         match = self.LCSC_QUANTITY_RE.search(barcode_data)
@@ -151,7 +174,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             raise ValidationError("LCSC QR quantity must be greater than zero")
         return quantity
 
-    def import_lcsc_sku(self, sku: str, *, product_payload: dict | None = None, quantity=None):
+    def import_lcsc_sku(self, sku: str, *, product_payload: dict | None = None, quantity=None, user=None):
         if not sku:
             raise ValidationError("SKU is required")
 
@@ -171,13 +194,15 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
         elif product_payload is None:
             product_payload = {"sku": sku, "category": None, "attributes": []}
 
-        category_path = self._category_path_for_product(product_payload.get("category"))
+        category_path = self._category_path_for_product(
+            product_payload.get("category"), product_payload.get("category_chain")
+        )
         return import_lcsc_product(
             product_payload,
             supplier=supplier,
             category_path=category_path,
             quantity=quantity,
-            stock_location=self.get_setting("DEFAULT_STOCK_LOCATION"),
+            stock_location=self._stock_location(user),
             image_headers=self._request_headers(),
         )
 
@@ -195,7 +220,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
 
         try:
             quantity = self._qr_quantity(barcode_data)
-            result = self.import_lcsc_sku(sku, quantity=quantity)
+            result = self.import_lcsc_sku(sku, quantity=quantity, user=user)
         except Exception as exc:  # pragma: no cover - exercised by mocked tests
             logger.exception("LCSC scan auto-import failed for %s", sku)
             return {"error": str(exc)}

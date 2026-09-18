@@ -2,6 +2,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from pathlib import PurePosixPath
+from typing import Any
 from urllib.parse import urlparse
 
 import requests

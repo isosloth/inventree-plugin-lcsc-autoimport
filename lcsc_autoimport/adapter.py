@@ -20,6 +20,15 @@ def _deep_get(mapping: dict[str, Any], *keys: str) -> Any:
     return current
 
 
+def _clean_chain(values: Iterable[Any]) -> list[str]:
+    cleaned: list[str] = []
+    for value in values:
+        text = _clean_text(value)
+        if text and text.lower() not in {"uncategorized", "unknown", "none"}:
+            cleaned.append(text)
+    return cleaned
+
+
 def _first_present(*values: Any) -> Any:
     for value in values:
         if value is not None and value != "":
@@ -113,6 +122,18 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "",
     )
 
+    parent_catalog_list = root.get("parentCatalogList")
+    if not isinstance(parent_catalog_list, list):
+        parent_catalog_list = []
+    chain_names: list[Any] = []
+    for entry in parent_catalog_list:
+        if isinstance(entry, dict):
+            chain_names.append(_first_present(entry.get("catalogNameEn"), entry.get("catalogName")))
+    chain_names.append(root.get("parentCatalogName"))
+    category_chain = _clean_chain(chain_names)
+    if category_chain:
+        category_name = category_chain[-1]
+
     pdf_url = _first_present(
         root.get("pdfUrl"),
         root.get("datasheetUrl"),
@@ -171,6 +192,7 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "name": _clean_text(name),
         "description": _clean_text(description),
         "category": _clean_text(category_name),
+        "category_chain": category_chain,
         "manufacturer": _clean_text(manufacturer),
         "manufacturer_part_number": _clean_text(manufacturer_part_number),
         "pdf_url": _clean_text(pdf_url),
@@ -189,6 +211,25 @@ def build_category_path(category_name: str, root_path: str) -> str:
 
     parts = [part.strip() for part in cleaned.replace("/", "|").replace("\\", "|").split("|")]
     filtered = [part for part in parts if part]
+    if not filtered:
+        return "/".join(root_parts)
+    return "/".join([*root_parts, *filtered])
+
+
+def build_category_chain_path(category_chain: list[str], root_path: str) -> str:
+    """Build a nested InvenTree category path from an ordered list of remote category names."""
+    root_parts = [part.strip() for part in _clean_text(root_path).strip("/").split("/") if part.strip()]
+
+    filtered: list[str] = []
+    for name in category_chain or []:
+        cleaned = _clean_text(name)
+        if not cleaned or cleaned.lower() in {"uncategorized", "unknown", "none"}:
+            continue
+        for piece in cleaned.replace("\\", "/").split("/"):
+            piece = piece.strip()
+            if piece:
+                filtered.append(piece)
+
     if not filtered:
         return "/".join(root_parts)
     return "/".join([*root_parts, *filtered])
