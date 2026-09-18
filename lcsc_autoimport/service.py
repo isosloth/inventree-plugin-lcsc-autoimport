@@ -1,10 +1,15 @@
 import logging
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Mapping
+from decimal import Decimal
+from pathlib import PurePosixPath
+from urllib.parse import urlparse
 
+import requests
+from django.core.files.base import ContentFile
 from django.db import transaction
 
 from company.models import Company, ManufacturerPart, SupplierPart
+from stock.models import StockItem, StockLocation
 from common.models import Parameter, ParameterTemplate
 from part.models import Part, PartCategory, PartCategoryParameterTemplate
 
@@ -77,7 +82,46 @@ def resolve_lcsc_supplier(supplier: Company | int | str | None) -> Company | Non
     return None
 
 
-def import_lcsc_product(product: dict[str, Any], *, supplier: Company | int | str | None, category_path: str | None = None) -> dict[str, Any]:
+def _store_product_image(part: Part, image_url: str, headers: Mapping[str, str] | None) -> None:
+    if part.image or not image_url:
+        return
+    parsed = urlparse(image_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise LCSCImportError("Product image URL must use HTTP or HTTPS")
+    response = requests.get(image_url, headers=headers, timeout=15)
+    response.raise_for_status()
+    if not response.headers.get("Content-Type", "").lower().startswith("image/"):
+        raise LCSCImportError("Product image URL did not return an image")
+    content = response.content
+    if len(content) > 5 * 1024 * 1024:
+        raise LCSCImportError("Product image is larger than 5 MiB")
+    filename = PurePosixPath(parsed.path).name or f"lcsc-{part.pk}.jpg"
+    part.image.save(filename, ContentFile(content), save=True)
+
+
+def _add_stock(part: Part, supplier_part: SupplierPart, quantity: Decimal | None, stock_location) -> StockItem | None:
+    if quantity is None:
+        return None
+    location = StockLocation.objects.filter(pk=stock_location).first()
+    if location is None:
+        raise LCSCImportError("Configure Default Stock Location before scanning a quantity")
+    stock_item = StockItem.objects.filter(part=part, location=location).order_by("pk").first()
+    if stock_item is None:
+        return StockItem.objects.create(part=part, supplier_part=supplier_part, location=location, quantity=quantity)
+    stock_item.quantity += quantity
+    stock_item.save()
+    return stock_item
+
+
+def import_lcsc_product(
+    product: dict[str, Any],
+    *,
+    supplier: Company | int | str | None,
+    category_path: str | None = None,
+    quantity: Decimal | None = None,
+    stock_location=None,
+    image_headers: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     """Creates or updates a Part and SupplierPart for an LCSC product payload."""
     if not isinstance(product, dict):
         raise LCSCImportError("Product payload is not a dictionary")
@@ -97,8 +141,13 @@ def import_lcsc_product(product: dict[str, Any], *, supplier: Company | int | st
 
     category = ensure_category_path(resolved_category_path)
 
-    supplier_part = SupplierPart.objects.filter(SKU=sku, supplier=supplier_obj).first()
+    supplier_part = SupplierPart.objects.filter(SKU=sku).select_related("part").first()
     part = supplier_part.part if supplier_part else None
+    manufacturer_part_number = str(product.get("manufacturer_part_number") or "").strip()
+    manufacturer_part = None
+    if part is None and manufacturer_part_number:
+        manufacturer_part = ManufacturerPart.objects.filter(MPN=manufacturer_part_number).select_related("part").first()
+        part = manufacturer_part.part if manufacturer_part else None
 
     if part is None:
         part = Part.objects.create(
@@ -108,13 +157,15 @@ def import_lcsc_product(product: dict[str, Any], *, supplier: Company | int | st
             purchaseable=True,
             component=True,
             active=True,
+            link=product.get("pdf_url") or None,
         )
         create_result = "created"
     else:
         part.name = product.get("name") or part.name
         part.description = product.get("description") or part.description
         part.category = category
-        part.save(update_fields=["name", "description", "category"])
+        part.link = product.get("pdf_url") or part.link
+        part.save(update_fields=["name", "description", "category", "link"])
         create_result = "updated"
 
     if supplier_part is None:
@@ -122,11 +173,13 @@ def import_lcsc_product(product: dict[str, Any], *, supplier: Company | int | st
             SKU=sku,
             supplier=supplier_obj,
             part=part,
+            link=product.get("product_url") or None,
         )
     else:
         supplier_part.part = part
         supplier_part.supplier = supplier_obj
-        supplier_part.save(update_fields=["part", "supplier"])
+        supplier_part.link = product.get("product_url") or supplier_part.link
+        supplier_part.save(update_fields=["part", "supplier", "link"])
 
     manufacturer_name = (product.get("manufacturer") or "").strip()
     manufacturer_part_number = (product.get("manufacturer_part_number") or "").strip()
@@ -156,10 +209,14 @@ def import_lcsc_product(product: dict[str, Any], *, supplier: Company | int | st
             continue
         create_or_update_parameter(part, name, value)
 
+    _store_product_image(part, str(product.get("image_url") or ""), image_headers)
+    stock_item = _add_stock(part, supplier_part, quantity, stock_location)
+
     return {
         "sku": sku,
         "part": part,
         "supplier_part": supplier_part,
+        "stock_item": stock_item,
         "category": category,
         "result": create_result,
         "warnings": [],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
@@ -22,14 +23,14 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
     SLUG = "lcscautoimport"
     TITLE = "LCSC Auto Import"
     DESCRIPTION = "Import LCSC parts automatically from product JSON and scanned QR payloads"
-    VERSION = "0.1.0"
+    VERSION = "0.1.3"
     AUTHOR = "isosloth"
 
     SETTINGS = {
         "LCSC_API_URL": {
             "name": "LCSC API URL",
             "description": "URL used to fetch product metadata for a given LCSC code",
-            "default": "https://wmsc.lcsc.com/wmsc/product/detail",
+            "default": "https://wmsc.lcsc.com/ftps/wm/product/detail",
         },
         "LCSC_API_KEY": {
             "name": "LCSC API Key",
@@ -68,6 +69,11 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             "description": "JSON object of additional HTTP headers sent with product requests",
             "default": "{}",
         },
+        "DEFAULT_STOCK_LOCATION": {
+            "name": "Default Stock Location",
+            "description": "Location used when an LCSC QR code includes a quantity",
+            "model": "stock.stocklocation",
+        },
         "FETCH_ENABLED": {
             "name": "Fetch Enabled",
             "description": "Toggle remote product fetching when importing an LCSC code",
@@ -86,6 +92,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
     ]
 
     LCSC_QR_RE = re.compile(r".*pc:([^,}]+).*", re.IGNORECASE)
+    LCSC_QUANTITY_RE = re.compile(r"(?:^|[,{\s])(?:qty|quantity):([^,}]+)", re.IGNORECASE)
 
     def _get_supplier(self):
         supplier_id = self.get_setting("LCSC_SUPPLIER_ID")
@@ -132,7 +139,19 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
         default = self.get_setting("DEFAULT_CATEGORY_PATH") or "Uncategorized"
         return build_category_path(default, root_path)
 
-    def import_lcsc_sku(self, sku: str, *, product_payload: dict | None = None):
+    def _qr_quantity(self, barcode_data: str):
+        match = self.LCSC_QUANTITY_RE.search(barcode_data)
+        if not match:
+            return None
+        try:
+            quantity = Decimal(match.group(1).strip())
+        except InvalidOperation as exc:
+            raise ValidationError("LCSC QR quantity must be numeric") from exc
+        if quantity <= 0:
+            raise ValidationError("LCSC QR quantity must be greater than zero")
+        return quantity
+
+    def import_lcsc_sku(self, sku: str, *, product_payload: dict | None = None, quantity=None):
         if not sku:
             raise ValidationError("SKU is required")
 
@@ -153,7 +172,14 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             product_payload = {"sku": sku, "category": None, "attributes": []}
 
         category_path = self._category_path_for_product(product_payload.get("category"))
-        return import_lcsc_product(product_payload, supplier=supplier, category_path=category_path)
+        return import_lcsc_product(
+            product_payload,
+            supplier=supplier,
+            category_path=category_path,
+            quantity=quantity,
+            stock_location=self.get_setting("DEFAULT_STOCK_LOCATION"),
+            image_headers=self._request_headers(),
+        )
 
     def scan(self, barcode_data: str, user, **kwargs):
         if not isinstance(barcode_data, str):
@@ -168,7 +194,8 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             return None
 
         try:
-            result = self.import_lcsc_sku(sku)
+            quantity = self._qr_quantity(barcode_data)
+            result = self.import_lcsc_sku(sku, quantity=quantity)
         except Exception as exc:  # pragma: no cover - exercised by mocked tests
             logger.exception("LCSC scan auto-import failed for %s", sku)
             return {"error": str(exc)}
@@ -179,4 +206,6 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             "success": "Found matching LCSC part",
             "sku": sku,
             "supplierpart": {"pk": result["supplier_part"].pk},
+            "quantity": str(quantity) if quantity is not None else None,
+            "stock_item": result["stock_item"].pk if result["stock_item"] else None,
         }

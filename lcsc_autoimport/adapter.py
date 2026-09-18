@@ -85,8 +85,7 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     name = _first_present(
-        root.get("productName"),
-        root.get("name"),
+	root.get("title"),
         root.get("productModel"),
         root.get("model"),
         str(sku),
@@ -101,17 +100,39 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     manufacturer = _first_present(
         root.get("manufacturer"),
-        root.get("brand"),
+        root.get("brandNameEn"),
         root.get("manufacturerName"),
         "",
     )
 
     manufacturer_part_number = _first_present(
         root.get("manufacturerPartNumber"),
+	root.get("productModel"),
         root.get("mpn"),
         root.get("mfrPartNumber"),
         "",
     )
+
+    pdf_url = _first_present(
+        root.get("pdfUrl"),
+        root.get("datasheetUrl"),
+        "",
+    )
+    product_url = _first_present(
+        root.get("productUrl"),
+        root.get("productDetailUrl"),
+        root.get("detailUrl"),
+        f"https://www.lcsc.com/product-detail/{sku}.html",
+    )
+    product_images = root.get("productImages") or []
+    first_image = product_images[0] if isinstance(product_images, list) and product_images else ""
+    if isinstance(first_image, dict):
+        first_image = _first_present(
+            first_image.get("url"),
+            first_image.get("imageUrl"),
+            first_image.get("src"),
+            "",
+        )
 
     attributes: list[dict[str, str]] = []
     raw_attrs = _first_present(
@@ -129,8 +150,8 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     for item in raw_attrs:
         if isinstance(item, dict):
-            field_name = _first_present(item.get("name"), item.get("paramName"), item.get("key"), item.get("label"))
-            field_value = _first_present(item.get("value"), item.get("paramValue"), item.get("data"), item.get("text"), item.get("valueText"))
+            field_name = _first_present(item.get("name"), item.get("paramNameEn"), item.get("paramName"), item.get("label"))
+            field_value = _first_present(item.get("value"), item.get("paramValueEn"), item.get("paramValue"), item.get("text"), item.get("valueText"))
             if field_name is None:
                 continue
             attributes.append({
@@ -152,6 +173,9 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "category": _clean_text(category_name),
         "manufacturer": _clean_text(manufacturer),
         "manufacturer_part_number": _clean_text(manufacturer_part_number),
+        "pdf_url": _clean_text(pdf_url),
+        "product_url": _clean_text(product_url),
+        "image_url": _clean_text(first_image),
         "attributes": attributes,
     }
 

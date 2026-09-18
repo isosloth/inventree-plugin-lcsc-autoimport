@@ -42,6 +42,7 @@ After installation, open the plugin settings and configure:
 - `Category Root Path` — every imported API category is created beneath this path; for example, `Electronics/PCB-Parts`
 - `Default Category Path` — fallback category name relative to the category root, such as `Uncategorized`
 - `Category Mapping` — optional JSON mapping of remote category names to paths relative to the category root; for example, `{"Resistors": "Passives/Resistors"}` becomes `Electronics/PCB-Parts/Passives/Resistors`
+- `Default Stock Location` — required when scanning an LCSC QR code with `qty` or `quantity`; existing stock at this location is incremented
 - `Fetch Enabled` — whether remote fetches are enabled
 
 A good default URL is the LCSC-compatible endpoint you use in your environment; the code is intentionally written so you can swap the remote adapter without changing the rest of the plugin.

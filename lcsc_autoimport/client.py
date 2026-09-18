@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class LCSCClient:
     """Minimal LCSC-compatible client with a configurable endpoint."""
 
-    DEFAULT_URL = "https://wmsc.lcsc.com/wmsc/product/detail"
+    DEFAULT_URL = "https://wmsc.lcsc.com/ftps/wm/product/detail"
 
     def __init__(
         self,
