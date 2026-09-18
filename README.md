@@ -1,145 +1,117 @@
-from __future__ import annotations
+# InvenTree LCSC Auto Import
 
-import json
-import logging
-import re
+An installable InvenTree plugin for automatically importing LCSC parts into your inventory from order lists and QR/barcode data.
 
-from django.core.exceptions import ValidationError
-from django.utils.translation import gettext_lazy as _
+## What this plugin does
 
-from plugin import InvenTreePlugin
-from plugin.mixins import BarcodeMixin, SettingsMixin, UrlsMixin
+- Accepts an LCSC product code (for example `C312270`) and fetches the relevant product JSON from a configurable endpoint.
+- Creates or updates the matching InvenTree `Part` and `SupplierPart` records.
+- Maps the LCSC product category to an InvenTree `PartCategory` tree using a configuration map.
+- Creates or reuses `ParameterTemplate` objects and stores product attributes as `Part` parameters.
+- Handles LCSC QR payloads such as:
+  `{"pbn":"...","on":"...","pc":"C312270",...}`
+- Supports bulk import of a list of LCSC part codes via a plugin endpoint.
 
-from .adapter import build_category_path
-from .client import LCSCClient
-from .service import import_lcsc_product, resolve_lcsc_supplier
+## Installation
 
-logger = logging.getLogger(__name__)
+Install the package into the same Python environment that runs InvenTree:
 
+```bash
+pip install inventree-plugin-lcsc-autoimport
+```
 
-class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlugin):
-    NAME = "LCSCAutoImport"
-    SLUG = "lcscautoimport"
-    TITLE = "LCSC Auto Import"
-    DESCRIPTION = "Import LCSC parts automatically from product JSON and scanned QR payloads"
-    VERSION = "0.1.0"
-    AUTHOR = "isosloth"
+If you are developing from this repository:
 
-    SETTINGS = {
-        "LCSC_API_URL": {
-            "name": "LCSC API URL",
-            "description": "URL used to fetch product metadata for a given LCSC code",
-            "default": "https://wmsc.lcsc.com/wmsc/product/detail",
-        },
-        "LCSC_API_KEY": {
-            "name": "LCSC API Key",
-            "description": "Optional bearer/API token used for the configured product endpoint",
-            "protected": True,
-        },
-        "LCSC_SUPPLIER_ID": {
-            "name": "LCSC Supplier",
-            "description": "The supplier company record used for LCSC parts",
-            "model": "company.company",
-            "model_filters": {"is_supplier": True},
-        },
-        "DEFAULT_CATEGORY_PATH": {
-            "name": "Default Category Path",
-            "description": "Fallback category path used when no category can be resolved",
-            "default": "Electronics/Uncategorized",
-        },
-        "CATEGORY_MAPPING": {
-            "name": "Category Mapping",
-            "description": "JSON mapping of remote category names to local InvenTree category paths",
-            "default": "{}",
-        },
-        "FETCH_ENABLED": {
-            "name": "Fetch Enabled",
-            "description": "Toggle remote product fetching when importing an LCSC code",
-            "default": True,
-            "type": "bool",
-        },
-        "TIMEOUT_SECONDS": {
-            "name": "Timeout Seconds",
-            "description": "Request timeout in seconds for remote product fetches",
-            "default": 15,
-        },
-    }
+```bash
+git clone https://github.com/isosloth/inventree-plugin-lcsc-autoimport.git
+cd inventree-plugin-lcsc-autoimport
+pip install -e .
+```
 
-    URLS = [
-        "lcsc_autoimport.urls",
-    ]
+Then enable the plugin inside the InvenTree admin / plugin settings panel.
 
-    LCSC_QR_RE = re.compile(r".*pc:([^,}]+).*", re.IGNORECASE)
+## Required configuration
 
-    def _get_supplier(self):
-        supplier_id = self.get_setting("LCSC_SUPPLIER_ID")
-        supplier = resolve_lcsc_supplier(supplier_id)
-        if supplier is not None:
-            return supplier
-        return resolve_lcsc_supplier("LCSC")
+After installation, open the plugin settings and configure:
 
-    def _category_mapping(self):
-        raw_map = self.get_setting("CATEGORY_MAPPING") or "{}"
-        try:
-            mapping = json.loads(raw_map)
-        except json.JSONDecodeError:
-            return {}
-        return mapping if isinstance(mapping, dict) else {}
+- `LCSC Supplier` — the InvenTree supplier company record that represents LCSC
+- `LCSC API URL` — the endpoint used to fetch product JSON
+- `LCSC API Key` — optional bearer token / API key if your endpoint requires it
+- `Default Category Path` — fallback category used when the remote product category is unknown
+- `Category Mapping` — optional mapping of remote category names to InvenTree category paths
+- `Fetch Enabled` — whether remote fetches are enabled
 
-    def _category_path_for_product(self, product_category: str | None):
-        mapping = self._category_mapping()
-        if product_category:
-            for src, target in mapping.items():
-                if str(src).lower() == str(product_category).lower():
-                    return str(target)
-        default = self.get_setting("DEFAULT_CATEGORY_PATH") or "Electronics/Uncategorized"
-        if product_category:
-            return build_category_path(product_category, default)
-        return default
+A good default URL is the LCSC-compatible endpoint you use in your environment; the code is intentionally written so you can swap the remote adapter without changing the rest of the plugin.
 
-    def import_lcsc_sku(self, sku: str, *, product_payload: dict | None = None):
-        if not sku:
-            raise ValidationError("SKU is required")
+## Bulk import endpoint
 
-        supplier = self._get_supplier()
-        if supplier is None:
-            raise ValidationError("No LCSC supplier company could be resolved")
+The plugin exposes an authenticated JSON endpoint:
 
-        if product_payload is None and self.get_setting("FETCH_ENABLED"):
-            client = LCSCClient(
-                base_url=self.get_setting("LCSC_API_URL"),
-                api_key=self.get_setting("LCSC_API_KEY"),
-                timeout=int(self.get_setting("TIMEOUT_SECONDS") or 15),
-            )
-            product_payload = client.fetch_product(sku)
-        elif product_payload is None:
-            product_payload = {"sku": sku, "category": self.get_setting("DEFAULT_CATEGORY_PATH") or "Electronics/Uncategorized", "attributes": []}
+```http
+POST /api/plugin/lcsc-autoimport/bulk/
+```
 
-        category_path = self._category_path_for_product(product_payload.get("category"))
-        return import_lcsc_product(product_payload, supplier=supplier, category_path=category_path)
+Example payload:
 
-    def scan(self, barcode_data: str, user, **kwargs):
-        if not isinstance(barcode_data, str):
-            return None
+```json
+{
+  "items": [
+    {"sku": "C312270", "quantity": 2},
+    {"sku": "C0402C104K5RACTU", "quantity": 5},
+    {"sku": "C345678"}
+  ]
+}
+```
 
-        match = self.LCSC_QR_RE.search(barcode_data.strip())
-        if not match:
-            return None
+You may also submit:
 
-        sku = match.group(1).strip()
-        if not sku:
-            return None
+```json
+{"skus": ["C312270", "C0402C104K5RACTU"]}
+```
 
-        try:
-            result = self.import_lcsc_sku(sku)
-        except Exception as exc:  # pragma: no cover - exercised by mocked tests
-            logger.exception("LCSC scan auto-import failed for %s", sku)
-            return {"error": str(exc)}
+The endpoint returns a summary including created, updated, skipped, and failed items.
 
-        part = result["part"]
-        return {
-            "part": part.format_matched_response(user=user),
-            "success": "Found matching LCSC part",
-            "sku": sku,
-            "supplierpart": {"pk": result["supplier_part"].pk},
-        }
+## QR scanning behavior
+
+When a scanned LCSC QR payload is sent to the plugin, it extracts the SKU from the `pc` field and reuses the same import logic as the bulk endpoint. If the SKU is already known, the plugin resolves the existing supplier part. If it is not known, it imports it first and then returns the matched InvenTree part.
+
+This means the scan flow is idempotent and does not create duplicate part records.
+
+## How category and parameter mapping works
+
+The plugin keeps a single normalization layer in `lcsc_autoimport.adapter` so it can adapt to different LCSC-compatible response formats. The remote payload is normalized to a common shape before it is imported.
+
+The plugin:
+
+1. converts the remote category name to a stable internal value
+2. resolves the target InvenTree category path
+3. creates the category tree if needed
+4. creates or reuses the matching `ParameterTemplate` objects
+5. stores the normalized parameter values on the `Part`
+
+The default mapping is intentionally conservative. Unknown categories fall back to the configured default category path.
+
+## Security notes
+
+- Keep the API key in the InvenTree plugin settings and do not hard-code secrets.
+- Treat remote product metadata as untrusted input and sanitize values before creating parameters.
+- The plugin logs warnings and returns structured errors for malformed payloads, HTTP failures, and missing fields.
+
+## Limitations
+
+- LCSC's public product API is not standardized across all endpoints and may vary by provider or third-party integration.
+- The plugin is designed to support any LCSC-compatible product endpoint via configuration; it does not assume an official API contract beyond a JSON shape that can be normalized.
+- If your environment returns a different field layout, update the remote adapter in `lcsc_autoimport.adapter` rather than changing the rest of the plugin logic.
+
+## Development and testing
+
+```bash
+pip install -e .[dev]
+pytest -q
+```
+
+The repository includes a small set of focused tests around the adapter and service logic, using mocked HTTP responses.
+
+## License
+
+MIT
