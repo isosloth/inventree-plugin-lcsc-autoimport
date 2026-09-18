@@ -9,7 +9,7 @@ import requests
 from django.core.files.base import ContentFile
 from django.db import transaction
 
-from company.models import Company, ManufacturerPart, SupplierPart
+from company.models import Company, ManufacturerPart, SupplierPart, SupplierPriceBreak
 from stock.models import StockItem, StockLocation
 from common.models import Parameter, ParameterTemplate
 from part.models import Part, PartCategory, PartCategoryParameterTemplate
@@ -19,6 +19,50 @@ logger = logging.getLogger(__name__)
 
 class LCSCImportError(RuntimeError):
     pass
+
+
+CURRENCY_SYMBOL_MAP = {
+    "€": "EUR",
+    "$": "USD",
+    "£": "GBP",
+    "¥": "CNY",
+    "₩": "KRW",
+}
+
+
+def _sync_supplier_pricing(
+    supplier_part: SupplierPart,
+    price_breaks: list[dict[str, Any]] | None,
+    *,
+    currency_symbol: str = "€",
+    currency_code: str | None = None,
+) -> list[SupplierPriceBreak]:
+    """Create/update ``SupplierPriceBreak`` rows from the remote price ladder.
+
+    Only entries whose reported ``currency_symbol`` matches ``currency_symbol`` are imported
+    (LCSC's product endpoint commonly reports the same ladder in multiple currencies). Set
+    ``currency_symbol`` to an empty string to import every reported entry as-is.
+    """
+    if not price_breaks:
+        return []
+
+    resolved_currency = currency_code or CURRENCY_SYMBOL_MAP.get(currency_symbol, currency_symbol or "EUR")
+
+    synced: list[SupplierPriceBreak] = []
+    for entry in price_breaks:
+        if currency_symbol and entry.get("currency_symbol") != currency_symbol:
+            continue
+        quantity = entry.get("quantity")
+        price = entry.get("price")
+        if quantity is None or price is None:
+            continue
+        price_break, _ = SupplierPriceBreak.objects.update_or_create(
+            part=supplier_part,
+            quantity=quantity,
+            defaults={"price": price, "price_currency": resolved_currency},
+        )
+        synced.append(price_break)
+    return synced
 
 
 def get_default_supplier() -> Company | None:
@@ -160,6 +204,8 @@ def import_lcsc_product(
     quantity: Decimal | None = None,
     stock_location=None,
     image_headers: Mapping[str, str] | None = None,
+    price_currency_symbol: str = "€",
+    price_currency_code: str | None = None,
 ) -> dict[str, Any]:
     """Creates or updates a Part and SupplierPart for an LCSC product payload."""
     if not isinstance(product, dict):
@@ -251,6 +297,12 @@ def import_lcsc_product(
 
     _store_product_image(part, str(product.get("image_url") or ""), image_headers)
     stock_item = _add_stock(part, supplier_part, quantity, stock_location)
+    price_breaks = _sync_supplier_pricing(
+        supplier_part,
+        product.get("price_breaks"),
+        currency_symbol=price_currency_symbol,
+        currency_code=price_currency_code,
+    )
 
     return {
         "sku": sku,
@@ -258,6 +310,7 @@ def import_lcsc_product(
         "supplier_part": supplier_part,
         "stock_item": stock_item,
         "category": category,
+        "price_breaks": price_breaks,
         "result": create_result,
         "warnings": [],
     }

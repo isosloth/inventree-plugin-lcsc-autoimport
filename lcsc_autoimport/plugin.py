@@ -23,7 +23,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
     SLUG = "lcscautoimport"
     TITLE = "LCSC Auto Import"
     DESCRIPTION = "Import LCSC parts automatically from product JSON and scanned QR payloads"
-    VERSION = "0.1.5"
+    VERSION = "0.1.6"
     AUTHOR = "isosloth"
 
     SETTINGS = {
@@ -88,6 +88,22 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             "name": "Timeout Seconds",
             "description": "Request timeout in seconds for remote product fetches",
             "default": 15,
+        },
+        "PRICE_CURRENCY_SYMBOL": {
+            "name": "Price Currency Symbol",
+            "description": (
+                "Only price breaks reported by LCSC under this currency symbol are imported "
+                "as Supplier Price Breaks (LCSC reports the same ladder in multiple currencies)"
+            ),
+            "default": "€",
+        },
+        "PRICE_CURRENCY_CODE": {
+            "name": "Price Currency Code",
+            "description": (
+                "ISO currency code used when saving price breaks; leave blank to auto-detect "
+                "from Price Currency Symbol (€ -> EUR, $ -> USD, £ -> GBP, ¥ -> CNY)"
+            ),
+            "default": "",
         },
     }
 
@@ -166,6 +182,12 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
         default = self.get_setting("DEFAULT_CATEGORY_PATH") or "Uncategorized"
         return build_category_path(default, root_path), None
 
+    def _price_currency(self) -> tuple[str, str | None]:
+        symbol = self.get_setting("PRICE_CURRENCY_SYMBOL")
+        symbol = symbol if symbol is not None else "€"
+        code = (self.get_setting("PRICE_CURRENCY_CODE") or "").strip() or None
+        return symbol, code
+
     def _stock_location(self, user=None):
         if user is not None and getattr(user, "is_authenticated", False):
             user_location = self.get_user_setting("DEFAULT_STOCK_LOCATION", user)
@@ -210,6 +232,7 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             product_payload.get("category_chain"),
             product_payload.get("category_chain_ids"),
         )
+        price_currency_symbol, price_currency_code = self._price_currency()
         return import_lcsc_product(
             product_payload,
             supplier=supplier,
@@ -218,6 +241,8 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             quantity=quantity,
             stock_location=self._stock_location(user),
             image_headers=self._request_headers(),
+            price_currency_symbol=price_currency_symbol,
+            price_currency_code=price_currency_code,
         )
 
     def scan(self, barcode_data: str, user, **kwargs):
@@ -247,4 +272,5 @@ class LCSCAutoImportPlugin(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlug
             "supplierpart": {"pk": result["supplier_part"].pk},
             "quantity": str(quantity) if quantity is not None else None,
             "stock_item": result["stock_item"].pk if result["stock_item"] else None,
+            "price_breaks": len(result.get("price_breaks") or []),
         }

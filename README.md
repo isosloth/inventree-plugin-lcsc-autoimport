@@ -45,8 +45,17 @@ After installation, open the plugin settings and configure:
 - `Default Stock Location` — fallback location used when scanning an LCSC QR code with `qty` or `quantity` and the scanning user has not set their own location; existing stock at the resolved location is incremented
 - Each user can also set their own **Default Stock Location** from their account plugin settings page (`/settings/user/plugin-settings/`); a user's own value always takes priority over the admin-configured default above
 - `Fetch Enabled` — whether remote fetches are enabled
+- `Price Currency Symbol` — only LCSC price-break entries reported under this currency symbol are imported (default `€`); LCSC reports the same quantity ladder in several currencies, so this selects which one becomes the `SupplierPart` price breaks
+- `Price Currency Code` — ISO currency code to store the imported price breaks under; leave blank to auto-detect from the symbol (`€` → `EUR`, `$` → `USD`, `£` → `GBP`, `¥` → `CNY`)
 
 A good default URL is the LCSC-compatible endpoint you use in your environment; the code is intentionally written so you can swap the remote adapter without changing the rest of the plugin.
+
+## Pricing
+
+When the LCSC payload includes a `productPriceList` array (quantity price breaks per currency), the plugin imports the
+ladder matching `Price Currency Symbol` as `SupplierPriceBreak` records on the `SupplierPart` — one row per reported
+quantity break (`ladder`) and unit price (`currencyPrice`). Re-importing a SKU updates existing breaks in place rather
+than duplicating them.
 
 ## Bulk import endpoint
 
@@ -75,6 +84,26 @@ You may also submit:
 ```
 
 The endpoint returns a summary including created, updated, skipped, and failed items.
+
+## CSV order import
+
+To import an entire LCSC order or BOM without typing SKUs by hand, upload a CSV export:
+
+```http
+POST /api/plugin/lcsc-autoimport/csv/
+```
+
+Either upload a file (multipart form field `file`) or POST raw CSV text as JSON:
+
+```json
+{"csv": "LCSC Part Number,Order Qty.\nC312270,25\nC0402C104K5RACTU,100\n"}
+```
+
+Column names are matched case-insensitively and tolerate punctuation, so common LCSC order-history export headers
+such as `LCSC Part Number` / `Order Qty.` are recognized automatically, alongside simpler `SKU` / `Quantity` headers.
+Rows are imported the same way as the bulk JSON endpoint — including stock quantity, pricing, images, and the full
+category chain — and a summary of created/updated/failed rows is returned. The file must be UTF-8 encoded and under
+2 MiB.
 
 ## QR scanning behavior
 

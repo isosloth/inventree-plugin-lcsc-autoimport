@@ -1,6 +1,9 @@
+import csv
+import io
 import logging
 import re
 from collections.abc import Iterable
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -67,6 +70,41 @@ def _slugify_key(name: Any) -> str:
     text = _clean_text(name).upper()
     text = re.sub(r"[^A-Z0-9]+", "_", text).strip("_")
     return text or "PARAM"
+
+
+def _parse_price_breaks(root: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract raw supplier price breaks from a ``productPriceList`` array.
+
+    Each entry is returned as-is (quantity, unit price, and the currency symbol reported by
+    the remote API) so the caller can decide which currency to import (see
+    ``Price Currency Symbol`` plugin setting).
+    """
+    raw_list = root.get("productPriceList")
+    if not isinstance(raw_list, list):
+        return []
+
+    breaks: list[dict[str, Any]] = []
+    for entry in raw_list:
+        if not isinstance(entry, dict):
+            continue
+        quantity_raw = _first_present(entry.get("ladder"), entry.get("startNumber"), entry.get("qStart"))
+        price_raw = entry.get("currencyPrice")
+        if quantity_raw is None or price_raw is None:
+            continue
+        try:
+            quantity = int(quantity_raw)
+        except (TypeError, ValueError):
+            continue
+        try:
+            price = Decimal(str(price_raw))
+        except InvalidOperation:
+            continue
+        breaks.append({
+            "quantity": quantity,
+            "price": price,
+            "currency_symbol": _clean_text(entry.get("currencySymbol")),
+        })
+    return breaks
 
 
 def _looks_like_encapsulation(name: Any) -> bool:
@@ -294,6 +332,7 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "product_url": _clean_text(product_url),
         "image_url": _clean_text(first_image),
         "attributes": attributes,
+        "price_breaks": _parse_price_breaks(root),
     }
 
 
@@ -309,6 +348,88 @@ def build_category_path(category_name: str, root_path: str) -> str:
     if not filtered:
         return "/".join(root_parts)
     return "/".join([*root_parts, *filtered])
+
+
+_CSV_SKU_HEADER_CANDIDATES = (
+    "lcsc part number",
+    "lcsc part_number",
+    "lcsc partnumber",
+    "lcsc sku",
+    "lcsc code",
+    "lcsc order number",
+    "lcsc",
+    "part number",
+    "part_number",
+    "sku",
+)
+
+_CSV_QUANTITY_HEADER_CANDIDATES = (
+    "order qty.",
+    "order qty",
+    "order quantity",
+    "quantity",
+    "qty",
+)
+
+
+def _normalize_header(name: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", _clean_text(name).lower())
+
+
+def parse_lcsc_order_csv(csv_text: str) -> list[dict[str, Any]]:
+    """Parse an LCSC order/BOM CSV export into a list of ``{"sku", "quantity"}`` rows.
+
+    Column names are matched case-insensitively and are tolerant of punctuation, so exports
+    such as "LCSC Part Number" / "Order Qty." (a common LCSC order-history export layout) are
+    recognized alongside simpler "SKU" / "Quantity" headers. Any column containing "lcsc" and
+    "part"/"sku"/"code" is used as a fallback SKU column, and any column containing "qty" or
+    "quantity" is used as a fallback quantity column.
+    """
+    text = (csv_text or "").lstrip("﻿")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("CSV file has no header row")
+
+    normalized_headers = {_normalize_header(header): header for header in reader.fieldnames if header}
+
+    sku_header = None
+    for candidate in _CSV_SKU_HEADER_CANDIDATES:
+        key = _normalize_header(candidate)
+        if key in normalized_headers:
+            sku_header = normalized_headers[key]
+            break
+    if sku_header is None:
+        for norm, original in normalized_headers.items():
+            if "lcsc" in norm and ("part" in norm or "sku" in norm or "code" in norm):
+                sku_header = original
+                break
+    if sku_header is None:
+        raise ValueError("Could not find an LCSC part number / SKU column in the CSV header")
+
+    quantity_header = None
+    for candidate in _CSV_QUANTITY_HEADER_CANDIDATES:
+        key = _normalize_header(candidate)
+        if key in normalized_headers:
+            quantity_header = normalized_headers[key]
+            break
+    if quantity_header is None:
+        for norm, original in normalized_headers.items():
+            if "qty" in norm or "quantity" in norm:
+                quantity_header = original
+                break
+
+    rows: list[dict[str, Any]] = []
+    for row_number, raw_row in enumerate(reader, start=2):
+        sku = _clean_text(raw_row.get(sku_header))
+        if not sku:
+            continue
+        quantity_value = _clean_text(raw_row.get(quantity_header)) if quantity_header else ""
+        rows.append({"sku": sku, "quantity": quantity_value or None, "row": row_number})
+
+    if not rows:
+        raise ValueError("CSV file did not contain any usable rows")
+
+    return rows
 
 
 def build_category_chain_path(category_chain: list[str], root_path: str) -> str:
