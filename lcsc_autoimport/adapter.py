@@ -106,6 +106,34 @@ def _parse_price_breaks(root: dict[str, Any]) -> list[dict[str, Any]]:
         })
     return breaks
 
+def _parse_price_initial(root: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract raw supplier price breaks from a ``productPriceList`` array.
+
+    Each entry is returned as-is (quantity, unit price, and the currency symbol reported by
+    the remote API) so the caller can decide which currency to import (see
+    ``Price Currency Symbol`` plugin setting).
+    """
+    raw_list = root.get("productPriceList")
+    if not isinstance(raw_list, list):
+        return None
+
+    breaks: dict[str, Any] = {}
+    entry = raw_list[0] if raw_list else None
+    if not isinstance(entry, dict):
+        return None
+    
+    price_raw = entry.get("currencyPrice")
+    
+    try:
+        price = Decimal(str(price_raw))
+    except InvalidOperation:
+        return None
+    breaks = {
+        "price": price,
+        "currency_symbol": _clean_text(entry.get("currencySymbol")),
+    }
+    return breaks or None
+
 
 def _looks_like_encapsulation(name: Any) -> bool:
     text = _clean_text(name).lower()
@@ -343,6 +371,7 @@ def normalize_lcsc_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "image_url": _clean_text(first_image),
         "attributes": attributes,
         "price_breaks": _parse_price_breaks(root),
+        "price_initial": _parse_price_initial(root),
         "weight_kg": weight_kg,
     }
 

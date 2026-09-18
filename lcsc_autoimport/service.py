@@ -181,7 +181,7 @@ def _store_product_image(part: Part, image_url: str, headers: Mapping[str, str] 
     part.image.save(filename, ContentFile(content), save=True)
 
 
-def _add_stock(part: Part, supplier_part: SupplierPart, quantity: Decimal | None, stock_location) -> StockItem | None:
+def _add_stock(part: Part, supplier_part: SupplierPart, quantity: Decimal | None, stock_location, purchase_price,) -> StockItem | None:
     if quantity is None:
         return None
     location = StockLocation.objects.filter(pk=stock_location).first()
@@ -189,8 +189,9 @@ def _add_stock(part: Part, supplier_part: SupplierPart, quantity: Decimal | None
         raise LCSCImportError("Configure Default Stock Location before scanning a quantity")
     stock_item = StockItem.objects.filter(part=part, location=location).order_by("pk").first()
     if stock_item is None:
-        return StockItem.objects.create(part=part, supplier_part=supplier_part, location=location, quantity=quantity)
+        return StockItem.objects.create(part=part, supplier_part=supplier_part, location=location, quantity=quantity, purchase_price=purchase_price)
     stock_item.quantity += quantity
+    stock_item.purchase_price = purchase_price
     stock_item.save()
     return stock_item
 
@@ -308,13 +309,8 @@ def import_lcsc_product(
     # Image/pricing are synced before stock: a stock-location error (e.g. a structural
     # location) should not prevent the part's media/pricing from being saved.
     _store_product_image(part, str(product.get("image_url") or ""), image_headers)
-    price_breaks = _sync_supplier_pricing(
-        supplier_part,
-        product.get("price_breaks"),
-        currency_symbol=price_currency_symbol,
-        currency_code=price_currency_code,
-    )
-    stock_item = _add_stock(part, supplier_part, quantity, stock_location)
+
+    stock_item = _add_stock(part, supplier_part, quantity, stock_location, (product.get("price_initial") or {}).get("price"))
 
     return {
         "sku": sku,
@@ -322,7 +318,6 @@ def import_lcsc_product(
         "supplier_part": supplier_part,
         "stock_item": stock_item,
         "category": category,
-        "price_breaks": price_breaks,
         "result": create_result,
         "warnings": [],
     }
