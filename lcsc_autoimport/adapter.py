@@ -130,7 +130,7 @@ def _parse_price_initial(root: dict[str, Any]) -> dict[str, Any] | None:
         return None
     breaks = {
         "price": price,
-        "currency_symbol": _clean_text(entry.get("currencySymbol")),
+        "currency_symbol": _first_present(root.get("currencyType"), _clean_text(entry.get("currencySymbol"))),
     }
     return breaks or None
 

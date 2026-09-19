@@ -57,6 +57,8 @@ class LCSCClient:
 
         try:
             payload = response.json()
+            if(payload.get("result") is None or payload.get("result") is False):
+                raise RuntimeError(f"LCSC endpoint returned unexpected payload structure for SKU {sku}")
         except ValueError as exc:  # pragma: no cover - exercised via mocked tests
             raise RuntimeError(f"LCSC endpoint returned invalid JSON for SKU {sku}") from exc
 
