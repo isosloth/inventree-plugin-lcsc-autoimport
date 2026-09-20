@@ -9,10 +9,11 @@ from django.core.exceptions import ValidationError
 from plugin import InvenTreePlugin
 from plugin.mixins import BarcodeMixin, SettingsMixin, UrlsMixin
 
-from . import PLUGIN_VERSION
+from .version import PLUGIN_VERSION
 from .adapter import build_category_chain_path, build_category_path
 from .client import LCSCClient
 from .service import import_lcsc_product, resolve_lcsc_supplier
+from .urls import urlpatterns as PLUGIN_URLPATTERNS
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +121,7 @@ class LCSCAutoImport(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlugin):
         }
     }
 
-    URLS = [
-        "lcsc_auto_import.urls",
-    ]
+    URLS = PLUGIN_URLPATTERNS
 
     LCSC_QR_RE = re.compile(r".*pc:([^,}]+).*", re.IGNORECASE)
     LCSC_QUANTITY_RE = re.compile(r"(?:^|[,{\s])(?:qty|quantity):([^,}]+)", re.IGNORECASE)

@@ -36,7 +36,7 @@ LCSCAutoImport = "lcsc_auto_import.core:LCSCAutoImport"
 where = [""]
 
 [tool.setuptools.dynamic]
-version = {attr = "lcsc_auto_import.PLUGIN_VERSION"} 
+version = {attr = "lcsc_auto_import.version.PLUGIN_VERSION"} 
 
 [tool.ruff]
 exclude = [

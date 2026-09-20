@@ -1,6 +1,6 @@
 """LCSC Auto Import InvenTree plugin."""
 
-PLUGIN_VERSION = "0.1.1"
+from .version import PLUGIN_VERSION 
 
 from .core import LCSCAutoImport
 
