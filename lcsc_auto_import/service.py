@@ -310,7 +310,10 @@ def import_lcsc_product(
     # location) should not prevent the part's media/pricing from being saved.
     _store_product_image(part, str(product.get("image_url") or ""), image_headers)
 
-    stock_item = _add_stock(part, supplier_part, quantity, stock_location, (product.get("price_initial") or {}).get("price"))
+    if quantity is not None:
+        stock_item = _add_stock(part, supplier_part, quantity, stock_location, (product.get("price_initial") or {}).get("price"))
+    else:
+        stock_item = None
 
     return {
         "sku": sku,

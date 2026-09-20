@@ -219,8 +219,8 @@ class LCSCAutoImport(SettingsMixin, BarcodeMixin, UrlsMixin, InvenTreePlugin):
                 quantity = Decimal(str(override))
             except (InvalidOperation, TypeError):
                 raise ValidationError("Override quantity must be numeric") from None
-            if quantity <= 0:
-                raise ValidationError("Override quantity must be greater than zero")
+            if quantity < 0:
+                raise ValidationError("Override quantity must be greater or equal to zero")
 
         return quantity
 
