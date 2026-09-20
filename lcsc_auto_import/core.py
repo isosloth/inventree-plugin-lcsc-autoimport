@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from plugin import InvenTreePlugin
 from plugin.mixins import BarcodeMixin, SettingsMixin, UrlsMixin
 
+from . import PLUGIN_VERSION
 from .adapter import build_category_chain_path, build_category_path
 from .client import LCSCClient
 from .service import import_lcsc_product, resolve_lcsc_supplier
